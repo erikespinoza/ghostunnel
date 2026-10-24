@@ -196,6 +196,7 @@ for `systemd:NAME` and `launchd:NAME` addresses.
 | `--override-server-name NAME` | Override the server name used for hostname verification. |
 | `--proxy URL` | Connect to target over given proxy (HTTP CONNECT{{% since "v1.12.0" %}}, HTTPS CONNECT{{% /since %}} or SOCKS5). Must be a proxy URL. |
 | `--disable-authentication` | Disable client authentication, no certificate will be provided to the server. |
+| `--tcp-only` | Create TCP Listener, leave TLS in tact. |
 
 {{% since "v1.12.0" %}}
 ### Proxy TLS

@@ -114,6 +114,7 @@ var (
 	clientAllowPolicy    = clientCommand.Flag("verify-policy", "Allow passing the location of an OPA bundle.").PlaceHolder("BUNDLE").String()
 	clientAllowQuery     = clientCommand.Flag("verify-query", "Rego query to evaluate against the server certificate and the policy.").PlaceHolder("QUERY").String()
 	clientDisableAuth    = clientCommand.Flag("disable-authentication", "Disable client authentication, no certificate will be provided to the server.").Default("false").Bool()
+	clientTcpOnly        = clientCommand.Flag("tcp-only", "Create TCP Listener, leave TLS in tact.").Default("false").Bool()
 
 	// Proxy TLS options (HTTPS CONNECT proxies only). These mirror the global
 	// --keystore/--cert/--key/--storepass/--cacert flags, but apply to the TLS
@@ -1296,7 +1297,12 @@ func clientBackendDialer(
 		return nil, nil, nil, fmt.Errorf("unable to get client TLS config: %w", err)
 	}
 	d := certloader.DialerWithCertificate(clientConfig, *connectTimeout, dialer)
+	if *clientTcpOnly {
+		d = dialer
+	}
 	return func(ctx context.Context) (net.Conn, error) {
+			ctx, cancel := context.WithTimeout(ctx, *connectTimeout)
+			defer cancel()
 			return d.DialContext(ctx, network, address)
 		},
 		regoPolicy,

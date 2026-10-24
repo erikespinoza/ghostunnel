@@ -434,6 +434,8 @@ certificate and the policy.
 **--disable-authentication** Disable client authentication, no
 certificate will be provided to the server.
 
+**--tcp-only** Create TCP Listener, leave TLS in tact.
+
 **--proxy-keystore=PATH** Path to keystore with client certificate for
 authenticating to an HTTPS proxy (combined PEM with cert/key, PKCS#12
 keystore, or JCEKS keystore).

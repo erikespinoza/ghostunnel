@@ -17,6 +17,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -2272,4 +2273,94 @@ func TestEnvironmentReloadProxyTLSConfigSource(t *testing.T) {
 	assert.Equal(t, "CN=proxy-client-2", proxyCert.GetIdentifier())
 	assert.True(t, status.listening, "status should be back to listening after reload")
 	assert.False(t, status.reloading, "status should not be stuck in reloading")
+}
+
+func TestClientBackendDialerTCPOnly(t *testing.T) {
+	origKeystorePath := *keystorePath
+	origCertPath := *certPath
+	origKeyPath := *keyPath
+	origCaBundlePath := *caBundlePath
+	origClientProxy := *clientProxy
+	origClientTcpOnly := *clientTcpOnly
+	origConnectTimeout := *connectTimeout
+	origEnabledCipherSuites := *enabledCipherSuites
+	t.Cleanup(func() {
+		*keystorePath = origKeystorePath
+		*certPath = origCertPath
+		*keyPath = origKeyPath
+		*caBundlePath = origCaBundlePath
+		*clientProxy = origClientProxy
+		*clientTcpOnly = origClientTcpOnly
+		*connectTimeout = origConnectTimeout
+		*enabledCipherSuites = origEnabledCipherSuites
+	})
+
+	certFile := writeTempFile(t, "test-cert-*.pem", []byte(testKeystoreCertOnly))
+	keyFile := writeTempFile(t, "test-key-*.pem", []byte(testKeystoreKeyPath))
+	caFile := writeTempFile(t, "test-ca-*.pem", []byte(testCertificate))
+
+	*keystorePath = ""
+	*certPath = certFile
+	*keyPath = keyFile
+	*caBundlePath = caFile
+	*clientProxy = nil
+	*clientTcpOnly = true
+	*connectTimeout = 100 * time.Millisecond
+	*enabledCipherSuites = "AES,CHACHA"
+
+	source, err := getTLSConfigSource(false)
+	assert.NoError(t, err)
+
+	// 1. Plain TCP target: dial should succeed and return a raw TCP connection (not *tls.Conn).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer ln.Close()
+
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, acceptErr := ln.Accept()
+		if acceptErr == nil {
+			accepted <- c
+		}
+	}()
+
+	dial, _, _, err := clientBackendDialer(source, "tcp", ln.Addr().String(), "127.0.0.1")
+	assert.NoError(t, err)
+
+	conn, err := dial(context.Background())
+	assert.NoError(t, err)
+	if conn != nil {
+		_, isTLS := conn.(*tls.Conn)
+		assert.False(t, isTLS, "--tcp-only should return a non-TLS connection")
+		conn.Close()
+	}
+	serverConn := <-accepted
+	serverConn.Close()
+
+	// 2. Stalled HTTP CONNECT proxy: dial with context.Background() must enforce *connectTimeout.
+	proxyLn, err := net.Listen("tcp", "127.0.0.1:0")
+	assert.NoError(t, err)
+	defer proxyLn.Close()
+
+	stalledDone := make(chan struct{})
+	defer close(stalledDone)
+	go func() {
+		c, acceptErr := proxyLn.Accept()
+		if acceptErr == nil {
+			<-stalledDone
+			c.Close()
+		}
+	}()
+
+	proxyURL, err := url.Parse("http://" + proxyLn.Addr().String())
+	assert.NoError(t, err)
+	*clientProxy = proxyURL
+
+	proxyDial, _, _, err := clientBackendDialer(source, "tcp", "localhost:8443", "localhost")
+	assert.NoError(t, err)
+
+	start := time.Now()
+	_, err = proxyDial(context.Background())
+	assert.Error(t, err, "dial via stalled proxy must time out")
+	assert.Less(t, time.Since(start), 2*time.Second, "dial should respect *connectTimeout")
 }
